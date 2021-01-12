@@ -1,0 +1,30 @@
+/*******************************************************************************
+
+    Author ......... Arno Streuli
+    Contact ........ astreuli@gmail.com
+    Home Site ...... http://cactiusers.org
+    Program ........ Easyvista API for Cacti
+    Purpose ........ Easyvista integration
+
+*******************************************************************************/
+
+----[ Purpose
+
+	This plugin manage the interaction with the Easyvistavia API
+
+----[ Installation
+
+	To install the plugin, please refer to the Plugin Installation Documentation
+
+    
+----[ Possible Bugs?
+   
+	If you find a problem, let me know!!! http://bugs.cacti.net
+
+----[ Future Changes
+
+	Got any ideas or complaints, please e-mail me!
+
+----[ Changelog
+
+1.0.0 Check if device is present into EZV, check SN, type and make it in 'En Service'
