@@ -111,13 +111,8 @@ function easyvista_utilities_action ($action) {
 			ORDER BY id");
 		// Upgrade the easyvista value
 			if( $dbquery > 0 ) {
-				foreach ($dbquery as $host) {
-					$result = easyvista_check_exist( $host );
-					
-					// device does not exist
-					if( !$result ) {
-						$result = easyvista_check_status( $host, true ); // check status and change to 'En Service'
-					}
+				foreach ($dbquery as $host_id) {
+					easyvista_process_device( $host_id );
 				}
 			}
 		}
@@ -208,12 +203,7 @@ function easyvista_device_action_execute($action) {
 			foreach( $selected_items as $host_id ) {
 				if ($action == 'check_easyvista') {
 					$dbquery = db_fetch_row("SELECT * FROM host WHERE id=".$host_id);
-					$result = easyvista_check_exist( $dbquery );
-					
-					// device does not exist
-					if( !$result ) {
-						$result = easyvista_check_status( $dbquery, true ); // check status and change to 'En Service'
-					}
+					easyvista_process_device($dbquery);
 				}
 			}
 		}
@@ -246,41 +236,58 @@ function easyvista_device_action_prepare($save) {
 function easyvista_api_device_new( $host_id ) {
     cacti_log('Enter EZV', false, 'EASYVISTA' );
 	
-	$useipam = read_config_option("easyvista_useipam");
-	
-	// if device is disabled, or snmp has nothing, don't save on IPAM
-	if( array_key_exists('disabled', $host_id) && array_key_exists('snmp_version', $host_id) && array_key_exists('id', $host_id) ) {
-		if ($host_id['disabled'] == 'on' || $host_id['snmp_version'] == 0 ) {
-			easyvista_log('don t use EZV: '.$host_id['description'] );
-			cacti_log('End EZV', false, 'EASYVISTA' );
-			return $host_id;
-		}
-	} else {
-		easyvista_log('field don t exist Recu: '. print_r($host_id, true) );
-		cacti_log('End EZV', false, 'EASYVISTA' );
-		return $host_id;
-	}
-	
-	if( $useipam ){
-		$result = easyvista_check_exist( $host_id );
-		
-		// device does not exist
-		if( !$result ) {
-			// add device to IPAM
-			easyvista_add_device( $host_id );
-		}
-	}
-    cacti_log('End IPAM', false, 'EASYVISTA' );
+	easyvista_process_device($host_id);
+    cacti_log('End EZV', false, 'EASYVISTA' );
 	
 	return $host_id;
 }
 
+// do check and change status
+function easyvista_process_device( $host_id, $doforce=true ) {
+	// if device is disabled, or snmp has nothing, don't save do it
+	if( array_key_exists('disabled', $host_id) && array_key_exists('snmp_version', $host_id) && array_key_exists('id', $host_id) && array_key_exists('serial_no', $host_id)) {
+		if ($host_id['disabled'] == 'on' || $host_id['snmp_version'] == 0 || empty($host_id['serial_no']) ) {
+			easyvista_log('don t use EZV: '.$host_id['description'] );
+			return;
+		}
+	} else {
+		easyvista_log('Field missing, Recu: '. print_r($host_id, true) );
+		return;
+	}
+
+	// if more than 1 serial number, (stack, iss) just create an array of it, and process each of it
+	$arraysn = explode(' ', $host_id['serial_no'] );
+
+	$externalid='';
+	foreach($arraysn as $SN){
+		$host_id['serial_no'] = $SN;
+		
+		$result = easyvista_check_exist( $host_id );
+	
+		// device does exist
+		if( $result !== false ) {
+			$jsondata = json_decode($result['body'], true, 512 );
+			$externalid = $externalid . $jsondata['records'][0]['ASSET_TAG'].' ';
+			
+			$result = easyvista_check_status( $host_id, $jsondata, $doforce ); // check status and change to 'En Service'
+		}
+	}
+	if( !empty($externalid) ) {
+		$mysql = "update host set external_id='". $externalid."' WHERE id=" . $host_id['id'];
+		db_execute($mysql);
+	}
+}
+
 function easyvista_check_exist( $host_id ){
 	$ezvurl = read_config_option("easyvista_url");
+	$ezvaccount = read_config_option("easyvista_account");
+	$ezvlogin = read_config_option("easyvista_login");
+	$ezvpassword = read_config_option("easyvista_password");
+		
+	// check if device allready exist
+	// https://easyvista-vali.lausanne.ch/api/v1/50004/assets?fields=asset_id,serial_number,CATALOG_ID,Network_identifier,Asset_TAG,status_id\&search=serial_number:FOC2138Y6AB
 	
-	// check if device allready exist, if so continue if not add it.
-	// https://ipam.lausanne.ch/rest/iplnetdev_list?WHERE=iplnetdev_name%20LIKE%20%27SE-CH9-40%25%27
-	$url = $ezvurl . "/rest/iplnetdev_list?WHERE=iplnetdev_name%20LIKE%20%27".$host_id["description"]."%25%27";
+	$url = $ezvurl .'/'. $ezvaccount. "/assets?fields=asset_id,serial_number,CATALOG_ID,Network_identifier,Asset_TAG,status_id\&search=serial_number:".$host_id['serial_no'];
 	
     $handle = curl_init();
 	curl_setopt( $handle, CURLOPT_URL, $url );
@@ -288,7 +295,9 @@ function easyvista_check_exist( $host_id ){
 	curl_setopt( $handle, CURLOPT_HEADER, true );
 	curl_setopt( $handle, CURLOPT_SSL_VERIFYPEER, false );
 	curl_setopt( $handle, CURLOPT_RETURNTRANSFER, true );
-	curl_setopt( $handle, CURLOPT_HTTPHEADER, array( 'X-IPM-Username:c19jYWN0aW5ldHdvcmthZG0=', 'X-IPM-Password:VU5BVzJtM3NGRis5dVN6WmY=','Content-Type:application/json; charset=UTF-8','cache-control:no-cache') );
+	curl_setopt( $handle, CURLOPT_USERPWD, "$ezvlogin:$ezvpassword" );
+	curl_setopt( $handle, CURLOPT_HTTPAUTH, CURLAUTH_BASIC );
+	curl_setopt( $handle, CURLOPT_HTTPHEADER, array( 'Content-Type:application/json; charset=UTF-8','cache-control:no-cache') );
 
 	$response = curl_exec($handle);
 	$error = curl_error($handle);
@@ -304,17 +313,20 @@ function easyvista_check_exist( $host_id ){
     $result['http_code'] = curl_getinfo($handle,CURLINFO_HTTP_CODE);
     $result['last_url'] = curl_getinfo($handle,CURLINFO_EFFECTIVE_URL);
 
-	easyvista_log( "ipam Return: ". print_r($result, true)  );
-	$ret = true;   
+	$ret = $result;   
     if ( $result['http_code'] > "299" ) {
-		easyvista_log( "ipam URL: ". $url );
+		easyvista_log( "EZV URL: ". $url );
         $result['curl_error'] = $error;
-		easyvista_log( "ipam error: ". print_r($result, true)  );
-    } else if( $result['http_code'] == "204" ) {
-		easyvista_log( "Device not on IPAM: ". $host_id['description'] );	
+		easyvista_log( "EZV error: ". print_r($result, true)  );
 		$ret = false;
 	} else {
-		easyvista_log( "Device on IPAM: ". $host_id['description']. ' ('.$result['http_code'].')' );		
+		$jsondata = json_decode($result['body'], true, 512 );
+		if( $jsondata['record_count'] == 0 ){
+			easyvista_log( "Device not on EZV: ". print_r($result, true) );
+			$ret = false;
+		} else {
+			easyvista_log( "Device on EZV: ". $host_id['description'].' recu:'.print_r($result, true) );
+		}
 	}
    
 	curl_close($handle);
@@ -322,10 +334,21 @@ function easyvista_check_exist( $host_id ){
 	return $ret;
 }
 
-function easyvista_check_status( $host_id, $doforce=true ){
+function easyvista_check_status( $host_id, $jsondata, $doforce=true ){
+	$ezvurl = read_config_option("easyvista_url");
+	$ezvaccount = read_config_option("easyvista_account");
+	$ezvlogin = read_config_option("easyvista_login");
+	$ezvpassword = read_config_option("easyvista_password");
+
+	easyvista_log( "Check and change status EZV ".$host_id["description"] .' json: '.print_r($jsondata, true) );		
 }
 
 function easyvista_add_device( $host_id ){
+	$ezvurl = read_config_option("easyvista_url");
+	$ezvaccount = read_config_option("easyvista_account");
+	$ezvlogin = read_config_option("easyvista_login");
+	$ezvpassword = read_config_option("easyvista_password");
+	
 	//$host_id["hostname"] do a nslook if necessary
 	$ip = gethostbyname($host_id["hostname"]);
 	if( $host_id['snmp_version'] == 3 ){
@@ -333,17 +356,19 @@ function easyvista_add_device( $host_id ){
 	} else {
 		$snmp_profile = 4;
 	}
-	//https://ipam.lausanne.ch/rpc/iplocator_ng_import_device.php?hostaddr=$host_id&site_id=4&snmp_profile_id=5
-	$ezvurl = read_config_option("easyvista_url");
-	$url = $ezvurl . "/rpc/iplocator_ng_import_device.php?hostaddr=". $ip ."&site_id=4&snmp_profile_id=". $snmp_profile;
+	
+	// https://
+	$url = $ezvurl . "";
 	
 	$handle = curl_init();
 	curl_setopt( $handle, CURLOPT_URL, $url );
-	curl_setopt( $handle, CURLOPT_POST, true );
+	curl_setopt( $handle, CURLOPT_POST, false );
 	curl_setopt( $handle, CURLOPT_HEADER, true );
 	curl_setopt( $handle, CURLOPT_SSL_VERIFYPEER, false );
 	curl_setopt( $handle, CURLOPT_RETURNTRANSFER, true );
-	curl_setopt( $handle, CURLOPT_HTTPHEADER, array( 'X-IPM-Username:c19jYWN0aW5ldHdvcmthZG0=', 'X-IPM-Password:VU5BVzJtM3NGRis5dVN6WmY=','Content-Type:application/json; charset=UTF-8','cache-control:no-cache') );
+	curl_setopt( $handle, CURLOPT_USERPWD, "$ezvlogin:$ezvpassword" );
+	curl_setopt( $handle, CURLOPT_HTTPAUTH, CURLAUTH_BASIC );
+	curl_setopt( $handle, CURLOPT_HTTPHEADER, array( 'Content-Type:application/json; charset=UTF-8','cache-control:no-cache') );
 
 	$response = curl_exec($handle);
 	$error = curl_error($handle);
@@ -371,7 +396,7 @@ function easyvista_add_device( $host_id ){
 
 function easyvista_log( $text ){
     	$dolog = read_config_option('easyvista_log_debug');
-	if( $dolog ) cacti_log( $text, false, "easyvista" );
+	if( $dolog ) cacti_log( $text, false, "EASYVISTA" );
 }
 
 ?>
