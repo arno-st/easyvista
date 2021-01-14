@@ -93,7 +93,7 @@ function easyvista_utilities_list () {
 			<a href='utilities.php?action=easyvista_check'>Check if devices are on easyvista.</a>
 		</td>
 		<td class="textArea">
-			Check all devices to check if they are on easyvista and 'En Service', if not add rease a message
+			Check all devices to see if they are on easyvista and 'En Service', if not generate a report
 		</td>
 	<?php
 	form_end_row();
@@ -112,6 +112,9 @@ function easyvista_utilities_action ($action) {
 		// Upgrade the easyvista value
 			if( $dbquery > 0 ) {
 				foreach ($dbquery as $host_id) {
+					if( !empty($host_id['external_id']) ) {
+						continue;
+					}
 					easyvista_process_device( $host_id );
 				}
 			}
@@ -208,7 +211,6 @@ function easyvista_device_action_execute($action) {
 			}
 		}
     }
-
 	return $action;
 }
 
@@ -244,41 +246,38 @@ function easyvista_api_device_new( $host_id ) {
 
 // do check and change status
 function easyvista_process_device( $host_id, $doforce=true ) {
+	$host_array = db_fetch_row_prepared("SELECT * FROM host WHERE id=?", array($host_id['id']));
+
 	// if device is disabled, or snmp has nothing, don't save do it
-	if( array_key_exists('disabled', $host_id) && array_key_exists('snmp_version', $host_id) && array_key_exists('id', $host_id) && array_key_exists('serial_no', $host_id)) {
-		if ($host_id['disabled'] == 'on' || $host_id['snmp_version'] == 0 || empty($host_id['serial_no']) ) {
-			easyvista_log('don t use EZV: '.$host_id['description'] );
-			return;
-		}
-	} else {
-		easyvista_log('Field missing, Recu: '. print_r($host_id, true) );
+	if ($host_array['disabled'] == 'on' || $host_array['snmp_version'] == 0 || empty($host_array['serial_no']) ) {
+		easyvista_log('don t use EZV on: '.$host_array['description'] );
 		return;
 	}
 
 	// if more than 1 serial number, (stack, iss) just create an array of it, and process each of it
-	$arraysn = explode(' ', $host_id['serial_no'] );
+	$arraysn = explode(' ', $host_array['serial_no'] );
 
 	$externalid='';
 	foreach($arraysn as $SN){
-		$host_id['serial_no'] = $SN;
+		$host_array['serial_no'] = $SN;
 		
-		$result = easyvista_check_exist( $host_id );
+		$result = easyvista_check_exist( $host_array );
 	
 		// device does exist
 		if( $result !== false ) {
 			$jsondata = json_decode($result['body'], true, 512 );
 			$externalid = $externalid . $jsondata['records'][0]['ASSET_TAG'].' ';
 			
-			$result = easyvista_check_status( $host_id, $jsondata, $doforce ); // check status and change to 'En Service'
+			$result = easyvista_check_status( $host_array, $jsondata, $doforce ); // check status and change to 'En Service'
 		}
 	}
 	if( !empty($externalid) ) {
-		$mysql = "update host set external_id='". $externalid."' WHERE id=" . $host_id['id'];
+		$mysql = "update host set external_id='". $externalid."' WHERE id=" . $host_array['id'];
 		db_execute($mysql);
 	}
 }
 
-function easyvista_check_exist( $host_id ){
+function easyvista_check_exist( $host ){
 	$ezvurl = read_config_option("easyvista_url");
 	$ezvaccount = read_config_option("easyvista_account");
 	$ezvlogin = read_config_option("easyvista_login");
@@ -287,7 +286,7 @@ function easyvista_check_exist( $host_id ){
 	// check if device allready exist
 	// https://easyvista-vali.lausanne.ch/api/v1/50004/assets?fields=asset_id,serial_number,CATALOG_ID,Network_identifier,Asset_TAG,status_id\&search=serial_number:FOC2138Y6AB
 	
-	$url = $ezvurl .'/'. $ezvaccount. "/assets?fields=asset_id,serial_number,CATALOG_ID,Network_identifier,Asset_TAG,status_id\&search=serial_number:".$host_id['serial_no'];
+	$url = $ezvurl .'/'. $ezvaccount. "/assets?fields=asset_id,serial_number,CATALOG_ID,Network_identifier,Asset_TAG,status_id\&search=serial_number:".$host['serial_no'];
 	
     $handle = curl_init();
 	curl_setopt( $handle, CURLOPT_URL, $url );
@@ -325,7 +324,7 @@ function easyvista_check_exist( $host_id ){
 			easyvista_log( "Device not on EZV: ". print_r($result, true) );
 			$ret = false;
 		} else {
-			easyvista_log( "Device on EZV: ". $host_id['description'].' recu:'.print_r($result, true) );
+			easyvista_log( "Device on EZV: ". $host['description'].' recu:'.print_r($result, true) );
 		}
 	}
    
