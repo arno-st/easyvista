@@ -93,7 +93,17 @@ function easyvista_utilities_list () {
 			<a href='utilities.php?action=easyvista_check'>Check if devices are on easyvista.</a>
 		</td>
 		<td class="textArea">
-			Check all devices to see if they are on easyvista and 'En Service', if not generate a report
+			Check all devices to see if they are on easyvista and 'En Service'
+		</td>
+	<?php
+	form_end_row();
+	form_alternate_row();
+	?>
+		<td class="textArea">
+			<a href='utilities.php?action=easyvista_report'>Display device that are not on easyvista.</a>
+		</td>
+		<td class="textArea">
+			Display device that are not on easyvista, or not En service
 		</td>
 	<?php
 	form_end_row();
@@ -102,7 +112,7 @@ function easyvista_utilities_list () {
 function easyvista_utilities_action ($action) {
 	global $item_rows;
 	
-	if ( $action == 'easyvista_check' ){
+	if ( $action == 'easyvista_check' || $action == 'easyvista_report' ){
 		if ($action == 'easyvista_check') {
 	// get device list,  where serial number is empty, or type
 			$dbquery = db_fetch_assoc("SELECT * FROM host 
@@ -118,10 +128,27 @@ function easyvista_utilities_action ($action) {
 					easyvista_process_device( $host_id );
 				}
 			}
+			top_header();
+			utilities();
+			bottom_footer();
+		} else if ($action == 'easyvista_report') {
+	// get device list, where serial number is empty, or type
+			$dbquery = db_fetch_assoc("SELECT * FROM host 
+			WHERE status = '3' AND disabled != 'on'
+			AND snmp_sysDescr LIKE '%cisco%'
+			AND external_id = ''
+			ORDER BY id");
+			if( $dbquery > 0 ) {
+				// export CSV device list
+				header("Content-Type: text/plain");
+				header("Content-Disposition: attachment; filename=easyvista_report.txt");
+				print( 'description,serial_no'."\r\n" );
+				foreach ($dbquery as $host) {
+					print( $host['description'].','.$host['serial_no'] );
+					print("\r\n");
+				}				
+			}
 		}
-		top_header();
-		utilities();
-		bottom_footer();
 	} 
 	return $action;
 }
@@ -236,10 +263,11 @@ function easyvista_device_action_prepare($save) {
 }
 
 function easyvista_api_device_new( $host_id ) {
-    cacti_log('Enter EZV', false, 'EASYVISTA' );
+    easyvista_log('Enter EZV' );
 	
 	easyvista_process_device($host_id);
-    cacti_log('End EZV', false, 'EASYVISTA' );
+	
+    easyvista_log('End EZV' );
 	
 	return $host_id;
 }
