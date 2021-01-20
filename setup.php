@@ -73,7 +73,6 @@ function easyvista_check_upgrade() {
 			author='"  . $version['author'] . "', 
 			webpage='" . $version['homepage'] . "' 
 			WHERE directory='" . $version['name'] . "' ");
-
 	}
 }
 
@@ -100,7 +99,7 @@ function easyvista_utilities_list () {
 	form_alternate_row();
 	?>
 		<td class="textArea">
-			<a href='utilities.php?action=easyvista_report'>Display device that are not on easyvista.</a>
+			<a href='utilities.php?action=easyvista_report'>Display device that are wrong on easyvista.</a>
 		</td>
 		<td class="textArea">
 			Display device that are not on easyvista, or not En service
@@ -132,19 +131,19 @@ function easyvista_utilities_action ($action) {
 			utilities();
 			bottom_footer();
 		} else if ($action == 'easyvista_report') {
-	// get device list, where serial number is empty, or type
+	// get device list, where eternal_id is empty or EZV no En Service
 			$dbquery = db_fetch_assoc("SELECT * FROM host 
 			WHERE status = '3' AND disabled != 'on'
 			AND snmp_sysDescr LIKE '%cisco%'
-			AND external_id = ''
+			AND (external_id = '' OR notes NOT LIKE '%EZV: En Service%')
 			ORDER BY id");
 			if( $dbquery > 0 ) {
 				// export CSV device list
-				header("Content-Type: text/plain");
-				header("Content-Disposition: attachment; filename=easyvista_report.txt");
-				print( 'description,serial_no'."\r\n" );
+				header("Content-Type: csv/plain");
+				header("Content-Disposition: attachment; filename=easyvista_report.csv");
+				print( 'description,serial_no,notes'."\r\n" );
 				foreach ($dbquery as $host) {
-					print( $host['description'].','.$host['serial_no'] );
+					print( $host['description'].','.$host['serial_no'].','.$host['notes'] );
 					print("\r\n");
 				}				
 			}
@@ -263,7 +262,15 @@ function easyvista_device_action_prepare($save) {
 }
 
 function easyvista_api_device_new( $host_id ) {
-    easyvista_log('Enter EZV' );
+	global $asset_status;
+
+// check valid call
+	if( !array_key_exists('disabled', $host_id ) || !array_key_exists('id', $host_id) ) {
+		easyvista_log('Not valid call: '. print_r($host_id, true) );
+		return $host_id;
+	}
+
+    easyvista_log('Enter EZV: '.$host_id['description'].'('.$host_id['id'].')' );
 	
 	easyvista_process_device($host_id);
 	
@@ -274,7 +281,9 @@ function easyvista_api_device_new( $host_id ) {
 
 // do check and change status
 function easyvista_process_device( $host_id, $doforce=true ) {
-	$host_array = db_fetch_row_prepared("SELECT * FROM host WHERE id=?", array($host_id['id']));
+	global $asset_status;
+
+	$host_array = db_fetch_row("SELECT * FROM host WHERE id=".$host_id['id']);
 
 	// if device is disabled, or snmp has nothing, don't save do it
 	if ($host_array['disabled'] == 'on' || $host_array['snmp_version'] == 0 || empty($host_array['serial_no']) ) {
@@ -306,6 +315,8 @@ function easyvista_process_device( $host_id, $doforce=true ) {
 }
 
 function easyvista_check_exist( $host ){
+	global $asset_status;
+
 	$ezvurl = read_config_option("easyvista_url");
 	$ezvaccount = read_config_option("easyvista_account");
 	$ezvlogin = read_config_option("easyvista_login");
@@ -314,7 +325,7 @@ function easyvista_check_exist( $host ){
 	// check if device allready exist
 	// https://easyvista-vali.lausanne.ch/api/v1/50004/assets?fields=asset_id,serial_number,CATALOG_ID,Network_identifier,Asset_TAG,status_id\&search=serial_number:FOC2138Y6AB
 	
-	$url = $ezvurl .'/'. $ezvaccount. "/assets?fields=asset_id,serial_number,CATALOG_ID,Network_identifier,Asset_TAG,status_id\&search=serial_number:".$host['serial_no'];
+	$url = $ezvurl .'/'. $ezvaccount. "/assets?fields=asset_id,serial_number,CATALOG_ID,Network_identifier,Asset_TAG,status_id&search=serial_number:".$host['serial_no'];
 	
     $handle = curl_init();
 	curl_setopt( $handle, CURLOPT_URL, $url );
@@ -362,15 +373,63 @@ function easyvista_check_exist( $host ){
 }
 
 function easyvista_check_status( $host_id, $jsondata, $doforce=true ){
+	$asset_status = array(
+		"1" => "En panne",
+		"2" => "En réparation",
+		"3" => "Prêté",
+		"4" => "En stock",
+		"5" => "Mis à jour",
+		"6" => "Retourné",
+		"7" => "Détruit",
+		"8" => "En service",
+		"9" => "Volé",
+		"10" => "En cours de transfert",
+		"11" => "A vérifier",
+		"12" => "A Restituer",
+		"13" => "Doublon",
+		"14" => "Recyclé",
+		"15" => "Spare Tcom",
+		"16" => "Abo suspendu",
+		"17" => "En panne GETRONICS",
+		"18" => "Désactivé",
+		"19" => "Retour au fournisseur",
+		"20" => "Perdu",
+		"21" => "Repris par l'utilisateur",
+		"22" => "En commande",
+		"25" => "Inventaire à contrôler",
+		"27" => "En migration",
+		"28" => "Résilié"
+	);
+
 	$ezvurl = read_config_option("easyvista_url");
 	$ezvaccount = read_config_option("easyvista_account");
 	$ezvlogin = read_config_option("easyvista_login");
 	$ezvpassword = read_config_option("easyvista_password");
 
-	easyvista_log( "Check and change status EZV ".$host_id["description"] .' json: '.print_r($jsondata, true) );		
+	$status_id = $jsondata['records'][0]['STATUS_ID'];
+	easyvista_log( "Check and change status EZV ".$host_id["description"] .' json: '.print_r($jsondata, true) );
+
+	$result = db_fetch_cell("SELECT notes from host WHERE id=". $host_id['id'] );
+/*
+18/01/2021 15:50:45 - EASYVISTA new status:Test EZV: En stock
+18/01/2021 15:50:45 - EASYVISTA status:Test EZV: En Service
+*/
+	$newpos = strpos($result, 'EZV: ');
+	if( $newpos === false ) {
+		$notes = $result .'\n\r'.'EZV: '.$asset_status[$status_id];
+	} else {
+		$newstatus = '\n\rEZV: '.$asset_status[$status_id];
+		$notes = substr_replace( $result, $newstatus , $newpos );
+	}
+
+	$mysql = "update host set notes='". $notes."' WHERE id=" . $host_id['id'];
+	db_execute($mysql);
+
 }
 
 function easyvista_add_device( $host_id ){
+	global $asset_status;
+
 	$ezvurl = read_config_option("easyvista_url");
 	$ezvaccount = read_config_option("easyvista_account");
 	$ezvlogin = read_config_option("easyvista_login");
@@ -425,5 +484,6 @@ function easyvista_log( $text ){
     	$dolog = read_config_option('easyvista_log_debug');
 	if( $dolog ) cacti_log( $text, false, "EASYVISTA" );
 }
+
 
 ?>
