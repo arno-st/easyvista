@@ -283,7 +283,7 @@ function easyvista_api_device_new( $host_id ) {
 function easyvista_process_device( $host_id, $doforce=true ) {
 	global $asset_status;
 
-	$host_array = db_fetch_row("SELECT * FROM host WHERE id=".$host_id['id']);
+	$host_array = db_fetch_row("SELECT * FROM host WHERE hostname='".$host_id['hostname']."'");
 
 	// if device is disabled, or snmp has nothing, don't save do it
 	if ($host_array['disabled'] == 'on' || $host_array['snmp_version'] == 0 || empty($host_array['serial_no']) ) {
