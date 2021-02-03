@@ -269,7 +269,7 @@ function easyvista_api_device_new( $host_id ) {
 		easyvista_log('Not valid call: '. print_r($host_id, true) );
 		return $host_id;
 	}
-
+	
     easyvista_log('Enter EZV: '.$host_id['description'].'('.$host_id['id'].')' );
 	
 	easyvista_process_device($host_id);
@@ -286,8 +286,14 @@ function easyvista_process_device( $host_id, $doforce=true ) {
 	$host_array = db_fetch_row("SELECT * FROM host WHERE hostname='".$host_id['hostname']."'");
 
 	// if device is disabled, or snmp has nothing, don't save do it
-	if ($host_array['disabled'] == 'on' || $host_array['snmp_version'] == 0 || empty($host_array['serial_no']) ) {
-		easyvista_log('don t use EZV on: '.$host_array['description'] );
+	if ($host_array['disabled'] == 'on' || $host_array['snmp_version'] == 0 ) {
+		easyvista_log('don t use EZV on: '.print_r($host_array, true) );
+		return;
+	}
+
+	// if device has no serial number
+	if ( empty($host_array['serial_no']) ) {
+		easyvista_log('No serial number on: '.$host_array['description'] );
 		return;
 	}
 
@@ -416,9 +422,9 @@ function easyvista_check_status( $host_id, $jsondata, $doforce=true ){
 */
 	$newpos = strpos($result, 'EZV: ');
 	if( $newpos === false ) {
-		$notes = $result .'\n\r'.'EZV: '.$asset_status[$status_id];
+		$notes = $result .' EZV: '.$asset_status[$status_id];
 	} else {
-		$newstatus = '\n\rEZV: '.$asset_status[$status_id];
+		$newstatus = ' EZV: '.$asset_status[$status_id];
 		$notes = substr_replace( $result, $newstatus , $newpos );
 	}
 
