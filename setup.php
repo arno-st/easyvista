@@ -141,9 +141,9 @@ function easyvista_utilities_action ($action) {
 				// export CSV device list
 				header("Content-Type: csv/plain");
 				header("Content-Disposition: attachment; filename=easyvista_report.csv");
-				print( 'description,serial_no,notes'."\r\n" );
+				print( 'description,type,serial_no,notes'."\r\n" );
 				foreach ($dbquery as $host) {
-					print( $host['description'].','.$host['serial_no'].','.$host['notes'] );
+					print( $host['description'].','.$host['type'].','.$host['serial_no'].','.$host['notes'] );
 					print("\r\n");
 				}				
 			}
@@ -265,12 +265,12 @@ function easyvista_api_device_new( $host_id ) {
 	global $asset_status;
 
 // check valid call
-	if( !array_key_exists('disabled', $host_id ) || !array_key_exists('id', $host_id) ) {
+	if( !array_key_exists('disabled', $host_id ) ) {
 		easyvista_log('Not valid call: '. print_r($host_id, true) );
 		return $host_id;
 	}
 	
-    easyvista_log('Enter EZV: '.$host_id['description'].'('.$host_id['id'].')' );
+    easyvista_log('Enter EZV: '.$host_id['description'] );
 	
 	easyvista_process_device($host_id);
 	
@@ -283,11 +283,11 @@ function easyvista_api_device_new( $host_id ) {
 function easyvista_process_device( $host_id, $doforce=true ) {
 	global $asset_status;
 
-	$host_array = db_fetch_row("SELECT * FROM host WHERE hostname='".$host_id['hostname']."'");
+	$host_array = db_fetch_row("SELECT * FROM host WHERE hostname='".$host_id['hostname']."' OR description='".$host_id['description']."'");
 
 	// if device is disabled, or snmp has nothing, don't save do it
 	if ($host_array['disabled'] == 'on' || $host_array['snmp_version'] == 0 ) {
-		easyvista_log('don t use EZV on: '.print_r($host_array, true) );
+		easyvista_log('don t use EZV on: '.$host_array['description'] );
 		return;
 	}
 
@@ -420,7 +420,7 @@ function easyvista_check_status( $host_id, $jsondata, $doforce=true ){
 18/01/2021 15:50:45 - EASYVISTA new status:Test EZV: En stock
 18/01/2021 15:50:45 - EASYVISTA status:Test EZV: En Service
 */
-	$newpos = strpos($result, 'EZV: ');
+	$newpos = strpos($result, ' EZV: ');
 	if( $newpos === false ) {
 		$notes = $result .' EZV: '.$asset_status[$status_id];
 	} else {
